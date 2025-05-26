@@ -42,3 +42,7 @@ YYYYMMDD_HHMMSS.hdf5
             front_image [N × H(480) × W(640) × 3]  # front camera (RGB)
             wrist_image [N × H(480) × W(640) × 3]  # wrist camera (RGB)
 ```
+
+## HDF5 File Validator
+
+![hdf5_validator](images/hdf5_validator.png)
