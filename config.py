@@ -1,0 +1,11 @@
+NETWORK_INTERFACE = 'eno1'
+SYNC_RATE = 30
+
+CAMERA_DISPLAY = False
+
+D1_CMD_ADDRESS = "tcp://localhost:5555"
+D1_ACT_ADDRESS = "tcp://localhost:5556"
+FRONT_CAMERA_ADDRESS = "tcp://192.168.123.18:5557"
+WRIST_CAMERA_ADDRESS = "tcp://192.168.123.18:5558"
+
+HDF5_DIR = "./data/grasp_block"
