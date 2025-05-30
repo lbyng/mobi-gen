@@ -7,6 +7,8 @@ import h5py
 import os
 import argparse
 
+import config
+
 from unitree_sdk2py.core.channel import ChannelPublisher, ChannelFactoryInitialize
 from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowCmd_
 from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_
@@ -300,9 +302,7 @@ class HDF5Replayer:
 
 def main():
     parser = argparse.ArgumentParser(description='HDF5 Replayer')
-    parser.add_argument('hdf5_file', type=str, help='Path to HDF5 file to replay')
-    parser.add_argument('--interface', type=str, default='eno1', help='Network interface (default: eno1)')
-    
+    parser.add_argument('hdf5_file', type=str, help='Path to HDF5 file to replay')    
     args = parser.parse_args()
     
     if not os.path.exists(args.hdf5_file):
@@ -310,7 +310,7 @@ def main():
         sys.exit(1)
     
     # Initialize Unitree SDK
-    ChannelFactoryInitialize(0, args.interface)
+    ChannelFactoryInitialize(0, config.NETWORK_INTERFACE)
     
     # Create replayer
     replayer = HDF5Replayer()
