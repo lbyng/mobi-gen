@@ -11,7 +11,7 @@ from datetime import datetime
 from scipy import interpolate
 from tqdm import tqdm
 
-import config as config
+import utils.config as config
 
 from unitree_sdk2py.core.channel import ChannelSubscriber, ChannelFactoryInitialize
 from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_
