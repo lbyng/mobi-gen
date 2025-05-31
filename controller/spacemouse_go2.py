@@ -1,5 +1,7 @@
 import time
 import pyspacemouse
+import zmq
+import json
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize
 from unitree_sdk2py.go2.sport.sport_client import SportClient
 from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
@@ -17,6 +19,10 @@ class spacemouse_go2:
         self.buttons = [0, 0]
         self.if_Damp = 0
 
+        self.zmq_context = zmq.Context()
+        self.zmq_socket = None
+        self.zmq_port = 6000
+
         return None
 
     def connect_spacemouse(self):
@@ -33,8 +39,15 @@ class spacemouse_go2:
         print("Go2 Robot connected")
 
         self.msc = MotionSwitcherClient()
-        self.msc.SelectMode("Normal")
-        print("Normal motion mode enabled")
+        self.msc.SelectMode("ai")
+        print("ai motion mode enabled")
+        return None
+    
+    def init_zmq_publisher(self):
+        self.zmq_socket = self.zmq_context.socket(zmq.PUB)
+        self.zmq_socket.bind(f"tcp://*:{self.zmq_port}")
+        print(f"ZeroMQ publisher initialized on port {self.zmq_port}")
+        time.sleep(0.5)
         return None
     
     def update_spacemouse(self):
@@ -63,6 +76,30 @@ class spacemouse_go2:
         if self.if_damp == -1.0:
             self.sport_client.Damp()
         return None 
+    
+    def send_position_via_zmq(self):
+        if self.zmq_socket is not None:
+            position_data = {
+                "x": self.mapped_spacemouse_pos[0],
+                "y": self.mapped_spacemouse_pos[1],
+                "yaw": self.mapped_spacemouse_pos[2],
+            }
+            
+            try:
+                self.zmq_socket.send_json(position_data, zmq.NOBLOCK)
+            except zmq.Again:
+                pass
+            except Exception as e:
+                print(f"Error sending ZMQ message: {e}")
+        return None
+
+    def cleanup(self):
+        if self.zmq_socket:
+            self.zmq_socket.close()
+        if self.zmq_context:
+            self.zmq_context.term()
+        print("ZeroMQ resources cleaned up")
+        return None
 
 
 def map_position_helper(x, ctrl_max, ctrl_min, mech_max, mech_min):
@@ -83,18 +120,25 @@ def map_position(spacemouse_pos):
     return [x, y, yaw]
 
 def main():
-
     robot = spacemouse_go2()
-    robot.connect_spacemouse()
-    robot.connect_robot()
-
-    while True:
-        robot.update_spacemouse()
-        robot.update_robot()
-        time.sleep(0.002)
-
-if __name__ == "__main__":
+    
     try:
-        main()
+        robot.connect_spacemouse()
+        robot.connect_robot()
+        robot.init_zmq_publisher()
+
+        while True:
+            robot.update_spacemouse()
+            robot.update_robot()
+            robot.send_position_via_zmq()
+            time.sleep(0.002)
+
+    except KeyboardInterrupt:
+        print("\nShutting down...")
     except Exception as e:
         print(f"Error: {e}")
+    finally:
+        robot.cleanup()
+
+if __name__ == "__main__":
+    main()
