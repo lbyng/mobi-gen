@@ -9,4 +9,4 @@ D1_ACT_ADDRESS = "tcp://localhost:5556"
 FRONT_CAMERA_ADDRESS = "tcp://192.168.123.18:5557"
 WRIST_CAMERA_ADDRESS = "tcp://192.168.123.18:5558"
 
-HDF5_DIR = "./data/open_door/"
+HDF5_DIR = "./data/move_grasp/"

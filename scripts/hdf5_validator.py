@@ -8,7 +8,7 @@ import os
 import argparse
 
 def validate_hdf5_file(file_path):
-    """Validate HDF5 file structure"""
+    """Validate HDF5 file structure for D1 mobile manipulation"""
     print(f"Validating: {os.path.basename(file_path)}")
     
     try:
@@ -22,11 +22,11 @@ def validate_hdf5_file(file_path):
                 lengths['action'] = len(action)
                 total_dim = action.shape[1]
                 
-                # Validate expected 43D format
-                if total_dim != 43:
-                    print(f"⚠️  WARNING: Expected 43D actions (36D Go2 + 7D D1), got {total_dim}D")
+                # Validate expected 10D format
+                if total_dim != 10:
+                    print(f"⚠️  WARNING: Expected 10D actions (3D base velocity + 7D D1), got {total_dim}D")
                 else:
-                    print(f"✅ Action format: 43D (36D Go2 + 7D D1)")
+                    print(f"✅ Action format: 10D (3D base velocity + 7D D1 positions)")
             else:
                 print("❌ FAIL: Missing 'action' dataset")
                 return False
@@ -38,24 +38,25 @@ def validate_hdf5_file(file_path):
             
             obs = f['observations']
             
-            # Check Go2 base observations
-            if 'base' in obs and 'joint_positions' in obs['base']:
-                lengths['base_joints'] = len(obs['base']['joint_positions'])
-                go2_joints = obs['base']['joint_positions'].shape[1]
-                if go2_joints != 12:
-                    print(f"⚠️  WARNING: Expected 12 Go2 joints, got {go2_joints}")
-            
             # Check D1 arm observations  
             if 'arm' in obs and 'joint_positions' in obs['arm']:
                 lengths['arm_joints'] = len(obs['arm']['joint_positions'])
                 d1_joints = obs['arm']['joint_positions'].shape[1]
                 if d1_joints != 7:
                     print(f"⚠️  WARNING: Expected 7 D1 joints, got {d1_joints}")
+                else:
+                    print(f"✅ Observation format: 7D (D1 joint positions)")
+            else:
+                print("❌ FAIL: Missing D1 arm observations")
+                return False
             
             # Check camera data
             if 'images' in obs:
                 for cam_name in obs['images'].keys():
                     lengths[f'camera_{cam_name}'] = len(obs['images'][cam_name])
+                    print(f"✅ Found camera: {cam_name}")
+            else:
+                print("⚠️  WARNING: No camera data found")
             
             # Check length consistency
             if len(set(lengths.values())) > 1:
@@ -69,23 +70,23 @@ def validate_hdf5_file(file_path):
             file_size_mb = os.path.getsize(file_path) / (1024*1024)
             
             # Get metadata
-            dt = f.attrs.get('dt', 0.02)
+            dt = f.attrs.get('dt', 0.033)  # 30Hz default
             duration = data_length * dt
+            sync_rate = f.attrs.get('sync_sample_rate', 30)
             
             print(f"✅ PASS: {data_length} timesteps, {duration:.1f}s, {file_size_mb:.1f}MB")
+            print(f"     Sync rate: {sync_rate}Hz")
             
-            # Show available data types
-            data_types = []
-            if 'base' in obs:
-                data_types.append("Go2")
-            if 'arm' in obs:
-                data_types.append("D1")
-            if 'images' in obs:
-                cam_list = list(obs['images'].keys())
-                data_types.append(f"Cameras({','.join(cam_list)})")
+            # Show data structure
+            print(f"     Observations: D1 arm (7D)")
+            print(f"     Actions: Base velocity (3D: x,y,yaw) + D1 positions (7D)")
             
-            print(f"     Data: {' + '.join(data_types)}")
-            print(f"     Action: Go2(36D: pos+vel+torque) + D1(7D: joints)")
+            # Check robot type
+            robot_type = f.attrs.get('robot_type', 'unknown')
+            if robot_type == 'd1_with_base_velocity':
+                print(f"✅ Robot type: {robot_type}")
+            else:
+                print(f"⚠️  WARNING: Unexpected robot type: {robot_type}")
             
             return True
             
@@ -102,126 +103,112 @@ def visualize_robot_trajectories(file_path, save_plots=False):
         action = f['action'][:]
         
         # Create figure
-        fig = plt.figure(figsize=(18, 12))
+        fig = plt.figure(figsize=(16, 10))
         gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
         
         time_steps = np.arange(len(action))
+        dt = f.attrs.get('dt', 0.033)
+        time_seconds = time_steps * dt
         
-        # Go2 joint positions (observations)
-        if 'base' in obs and 'joint_positions' in obs['base']:
-            joint_pos = obs['base']['joint_positions'][:]
-            
-            ax1 = fig.add_subplot(gs[0, 0])
-            for i in range(12):
-                ax1.plot(time_steps, joint_pos[:, i], alpha=0.7, linewidth=0.8)
-            ax1.set_title('Go2 Joint Positions (Obs)')
-            ax1.set_xlabel('Time Steps')
-            ax1.set_ylabel('Position (rad)')
-            ax1.grid(True, alpha=0.3)
-            
-            # IMU orientation
-            if 'orientation' in obs['base']:
-                ax2 = fig.add_subplot(gs[0, 1])
-                orientation = obs['base']['orientation'][:]
-                labels = ['qw', 'qx', 'qy', 'qz']
-                for i in range(4):
-                    ax2.plot(time_steps, orientation[:, i], label=labels[i], alpha=0.8)
-                ax2.set_title('Go2 IMU Orientation')
-                ax2.set_xlabel('Time Steps')
-                ax2.set_ylabel('Quaternion')
-                ax2.legend()
-                ax2.grid(True, alpha=0.3)
+        # 在这里计算duration！
+        duration = len(time_steps) * dt
         
         # D1 arm joint positions (observations)
         if 'arm' in obs and 'joint_positions' in obs['arm']:
             arm_pos = obs['arm']['joint_positions'][:]
             
-            ax3 = fig.add_subplot(gs[0, 2])
+            ax1 = fig.add_subplot(gs[0, :2])
             for i in range(7):
-                ax3.plot(time_steps, arm_pos[:, i], label=f'J{i}', alpha=0.7)
-            ax3.set_title('D1 Arm Joint Positions (Obs)')
-            ax3.set_xlabel('Time Steps')
-            ax3.set_ylabel('Position (rad)')
-            ax3.legend()
-            ax3.grid(True, alpha=0.3)
+                ax1.plot(time_seconds, arm_pos[:, i], label=f'Joint {i+1}', alpha=0.8)
+            ax1.set_title('D1 Arm Joint Positions (Observations)', fontsize=12)
+            ax1.set_xlabel('Time (s)')
+            ax1.set_ylabel('Position (rad)')
+            ax1.legend(loc='upper right')
+            ax1.grid(True, alpha=0.3)
         
-        # Go2 position actions (0-11)
-        ax4 = fig.add_subplot(gs[1, 0])
-        go2_pos_actions = action[:, :12]
-        for i in range(12):
-            ax4.plot(time_steps, go2_pos_actions[:, i], alpha=0.6, linewidth=0.8)
-        ax4.set_title('Go2 Position Actions')
-        ax4.set_xlabel('Time Steps')
-        ax4.set_ylabel('Target Position (rad)')
+        # Base velocity actions (0-2)
+        ax2 = fig.add_subplot(gs[0, 2])
+        base_vel_actions = action[:, :3]
+        labels = ['x velocity', 'y velocity', 'yaw velocity']
+        colors = ['red', 'green', 'blue']
+        for i in range(3):
+            ax2.plot(time_seconds, base_vel_actions[:, i], label=labels[i], 
+                    color=colors[i], alpha=0.8, linewidth=1.5)
+        ax2.set_title('Base Velocity Commands', fontsize=12)
+        ax2.set_xlabel('Time (s)')
+        ax2.set_ylabel('Velocity (m/s, rad/s)')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # D1 position actions (3-9)
+        ax3 = fig.add_subplot(gs[1, :2])
+        d1_actions = action[:, 3:10]
+        for i in range(7):
+            ax3.plot(time_seconds, d1_actions[:, i], label=f'Joint {i+1}', alpha=0.8)
+        ax3.set_title('D1 Position Commands (Actions)', fontsize=12)
+        ax3.set_xlabel('Time (s)')
+        ax3.set_ylabel('Target Position (rad)')
+        ax3.legend(loc='upper right')
+        ax3.grid(True, alpha=0.3)
+        
+        # Base velocity magnitude
+        ax4 = fig.add_subplot(gs[1, 2])
+        linear_vel_magnitude = np.linalg.norm(base_vel_actions[:, :2], axis=1)
+        angular_vel = np.abs(base_vel_actions[:, 2])
+        ax4.plot(time_seconds, linear_vel_magnitude, label='Linear (x,y)', 
+                color='purple', alpha=0.8, linewidth=1.5)
+        ax4.plot(time_seconds, angular_vel, label='Angular (yaw)', 
+                color='orange', alpha=0.8, linewidth=1.5)
+        ax4.set_title('Base Velocity Magnitude', fontsize=12)
+        ax4.set_xlabel('Time (s)')
+        ax4.set_ylabel('Speed (m/s, rad/s)')
+        ax4.legend()
         ax4.grid(True, alpha=0.3)
         
-        # Go2 velocity actions (12-23)
-        ax5 = fig.add_subplot(gs[1, 1])
-        go2_vel_actions = action[:, 12:24]
-        for i in range(12):
-            ax5.plot(time_steps, go2_vel_actions[:, i], alpha=0.6, linewidth=0.8)
-        ax5.set_title('Go2 Velocity Actions')
-        ax5.set_xlabel('Time Steps')
-        ax5.set_ylabel('Target Velocity (rad/s)')
-        ax5.grid(True, alpha=0.3)
-        
-        # Go2 torque actions (24-35)
-        ax6 = fig.add_subplot(gs[1, 2])
-        go2_torque_actions = action[:, 24:36]
-        for i in range(12):
-            ax6.plot(time_steps, go2_torque_actions[:, i], alpha=0.6, linewidth=0.8)
-        ax6.set_title('Go2 Torque Actions')
-        ax6.set_xlabel('Time Steps')
-        ax6.set_ylabel('Target Torque (Nm)')
-        ax6.grid(True, alpha=0.3)
-        
-        # D1 arm actions (36-42)
-        ax7 = fig.add_subplot(gs[2, 0])
-        d1_actions = action[:, 36:43]
-        for i in range(7):
-            ax7.plot(time_steps, d1_actions[:, i], label=f'J{i}', alpha=0.7)
-        ax7.set_title('D1 Arm Actions (7DOF)')
-        ax7.set_xlabel('Time Steps')
-        ax7.set_ylabel('Target Position (rad)')
-        ax7.legend()
-        ax7.grid(True, alpha=0.3)
-        
-        # Action magnitude analysis
-        ax8 = fig.add_subplot(gs[2, 1])
-        go2_magnitude = np.linalg.norm(action[:, :36], axis=1)
-        d1_magnitude = np.linalg.norm(action[:, 36:43], axis=1)
-        ax8.plot(time_steps, go2_magnitude, label='Go2', alpha=0.8)
-        ax8.plot(time_steps, d1_magnitude, label='D1', alpha=0.8)
-        ax8.set_title('Action Magnitude')
-        ax8.set_xlabel('Time Steps')
-        ax8.set_ylabel('L2 Norm')
-        ax8.legend()
-        ax8.grid(True, alpha=0.3)
+        # D1 tracking error (if actual matches command)
+        if 'arm' in obs and 'joint_positions' in obs['arm']:
+            ax5 = fig.add_subplot(gs[2, :2])
+            tracking_error = d1_actions - arm_pos
+            for i in range(7):
+                ax5.plot(time_seconds, tracking_error[:, i], 
+                        label=f'Joint {i+1}', alpha=0.7)
+            ax5.set_title('D1 Tracking Error (Command - Actual)', fontsize=12)
+            ax5.set_xlabel('Time (s)')
+            ax5.set_ylabel('Error (rad)')
+            ax5.legend(loc='upper right')
+            ax5.grid(True, alpha=0.3)
+            ax5.axhline(y=0, color='black', linestyle='--', alpha=0.5)
         
         # Statistics
-        ax9 = fig.add_subplot(gs[2, 2])
-        dt = f.attrs.get('dt', 0.02)
+        ax6 = fig.add_subplot(gs[2, 2])
+        sync_rate = f.attrs.get('sync_sample_rate', 30)
+        
         stats_text = f"""Episode Statistics:
 
 Timesteps: {len(time_steps)}
-Duration: {len(time_steps)*dt:.1f}s
-Sample Rate: {1/dt:.1f}Hz
+Duration: {duration:.1f}s
+Sync Rate: {sync_rate}Hz
+dt: {dt:.3f}s
 File size: {os.path.getsize(file_path)/(1024*1024):.1f}MB
 
-Action Structure:
-  Total: 43D
-  Go2: 36D
-    - Positions: 0-11
-    - Velocities: 12-23  
-    - Torques: 24-35
-  D1: 7D
-    - Positions: 36-42"""
+Action Structure (10D):
+  Base Velocity: 3D
+  D1 Positions: 7D
+
+Observation Structure (7D):
+  D1 Joint Positions: 7D
+
+Base Velocity Stats:
+  Max linear: {linear_vel_magnitude.max():.3f} m/s
+  Max angular: {angular_vel.max():.3f} rad/s"""
         
-        ax9.text(0.05, 0.95, stats_text, transform=ax9.transAxes, 
-                fontsize=9, verticalalignment='top', fontfamily='monospace')
-        ax9.axis('off')
+        ax6.text(0.05, 0.95, stats_text, transform=ax6.transAxes, 
+                fontsize=9, verticalalignment='top', fontfamily='monospace',
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray", alpha=0.5))
+        ax6.axis('off')
         
-        plt.suptitle(f'Go2+D1 Trajectory Analysis - {os.path.basename(file_path)}', fontsize=14)
+        plt.suptitle(f'D1 Mobile Manipulation Analysis - {os.path.basename(file_path)}', 
+                    fontsize=14, fontweight='bold')
         
         if save_plots:
             plot_path = file_path.replace('.hdf5', '_analysis.png')
@@ -255,13 +242,14 @@ def visualize_camera_data(file_path, save_images=False, max_frames=6):
         frame_indices = np.linspace(0, total_frames-1, num_frames_to_show, dtype=int)
         
         fig, axes = plt.subplots(num_cameras, num_frames_to_show, 
-                                figsize=(num_frames_to_show*2.5, num_cameras*2.5))
+                                figsize=(num_frames_to_show*3, num_cameras*2.5))
         
         if num_cameras == 1:
             axes = axes.reshape(1, -1)
         if num_frames_to_show == 1:
             axes = axes.reshape(-1, 1)
         
+        dt = f.attrs.get('dt', 0.033)
         fig.suptitle(f'Camera Data - {os.path.basename(file_path)}', fontsize=14)
         
         for cam_idx, cam_name in enumerate(camera_names):
@@ -277,14 +265,25 @@ def visualize_camera_data(file_path, save_images=False, max_frames=6):
                     img = ((img - img.min()) / (img.max() - img.min()) * 255).astype(np.uint8)
                 
                 ax.imshow(img)
-                ax.set_title(f'{cam_name}\n#{actual_frame}')
+                time_sec = actual_frame * dt
+                ax.set_title(f'{cam_name}\nt={time_sec:.1f}s (#{actual_frame})')
                 ax.axis('off')
+                
+                # Add frame border based on camera type
+                if 'front' in cam_name.lower():
+                    for spine in ax.spines.values():
+                        spine.set_edgecolor('blue')
+                        spine.set_linewidth(2)
+                elif 'wrist' in cam_name.lower():
+                    for spine in ax.spines.values():
+                        spine.set_edgecolor('green')
+                        spine.set_linewidth(2)
                 
                 # Save individual images if requested
                 if save_images:
                     img_save_path = file_path.replace('.hdf5', f'_{cam_name}_{actual_frame:04d}.jpg')
                     img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-                    cv2.imwrite(img_save_path, img_bgr)
+                    cv2.imwrite(img_bgr, img_save_path)
         
         plt.tight_layout()
         
@@ -295,13 +294,38 @@ def visualize_camera_data(file_path, save_images=False, max_frames=6):
         
         plt.show()
 
+def print_detailed_structure(file_path):
+    """Print detailed HDF5 structure"""
+    print("\nDetailed HDF5 Structure:")
+    print("="*50)
+    
+    def print_attrs(name, obj):
+        if hasattr(obj, 'attrs'):
+            attrs = dict(obj.attrs)
+            if attrs:
+                print(f"{name} attributes: {attrs}")
+    
+    def print_dataset_info(name, obj):
+        if isinstance(obj, h5py.Dataset):
+            print(f"{name}: shape={obj.shape}, dtype={obj.dtype}")
+    
+    with h5py.File(file_path, 'r') as f:
+        print("File attributes:")
+        for key, value in f.attrs.items():
+            print(f"  {key}: {value}")
+        print()
+        
+        f.visititems(print_dataset_info)
+        f.visititems(print_attrs)
+
 def main():
-    parser = argparse.ArgumentParser(description='HDF5 Validator for Go2+D1 (43D format)')
+    parser = argparse.ArgumentParser(description='HDF5 Validator for D1 Mobile Manipulation (10D format)')
     parser.add_argument('file_path', type=str, help='HDF5 file path')
     parser.add_argument('--save-plots', action='store_true', help='Save plots')
     parser.add_argument('--save-images', action='store_true', help='Save images')
     parser.add_argument('--max-frames', type=int, default=6, help='Max frames to show')
     parser.add_argument('--no-viz', action='store_true', help='Skip visualizations')
+    parser.add_argument('--structure', action='store_true', help='Print detailed structure')
     
     args = parser.parse_args()
     
@@ -313,6 +337,9 @@ def main():
     try:
         # Validate file
         is_valid = validate_hdf5_file(args.file_path)
+        
+        if args.structure:
+            print_detailed_structure(args.file_path)
         
         if not is_valid:
             print(f"\n❌ File failed validation")
@@ -328,6 +355,8 @@ def main():
         
     except Exception as e:
         print(f"❌ Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == '__main__':
     main()
