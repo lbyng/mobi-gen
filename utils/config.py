@@ -3,6 +3,7 @@ SYNC_RATE = 30
 
 CAMERA_DISPLAY = False
 
+GO2_CMD_ADDRESS = "tcp://localhost:6000"
 D1_CMD_ADDRESS = "tcp://localhost:5555"
 D1_ACT_ADDRESS = "tcp://localhost:5556"
 FRONT_CAMERA_ADDRESS = "tcp://192.168.123.18:5557"
