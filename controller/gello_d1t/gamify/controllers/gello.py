@@ -2,6 +2,9 @@
 import time
 import numpy as np
 import zmq
+import threading
+import sys
+import select
 from STservo_sdk import *
 
 # Default normalization and joint limits
@@ -98,6 +101,23 @@ def clamp_delta_move(current, target, max_delta_deg):
     next_pos = current + max_delta
     return next_pos.tolist()
 
+def keyboard_listener(enabled_flag):
+    print("\nPress blank to switch state")
+    print("Press 'q' or Ctrl+C to exit\n")
+    
+    while True:
+        i, o, e = select.select([sys.stdin], [], [], 0.001)
+        if i:
+            key = sys.stdin.read(1)
+            if key == ' ':
+                enabled_flag[0] = not enabled_flag[0]
+                status = "Real State" if enabled_flag[0] else "0 State"
+                print(f"\nSwitch: {status}")
+            elif key == 'q':
+                print("\nExiting...")
+                sys.exit(0)
+        time.sleep(0.1)
+
 def main():
     serial_port = "/dev/ttyACM0"
     zmq_endpoint = "tcp://*:5555"
@@ -112,26 +132,47 @@ def main():
     pub.bind(zmq_endpoint)
     time.sleep(1)
 
-    print(f"Publishing joint angles on {zmq_endpoint} with limited velocity...")
+    print(f"Publishing joint angles on {zmq_endpoint}...")
+
+    enabled = [False]
+    
+    keyboard_thread = threading.Thread(target=keyboard_listener, args=(enabled,))
+    keyboard_thread.daemon = True
+    keyboard_thread.start()
 
     current_pos = None
+    zero_positions = [-7.35, -20.40, 14.10, 65.90, -16.81, 0.0, 65.0]
+    
     try:
         while True:
-            ctrl_pos = wrapper.get_joint_pos()
-            target_pos = map_position(ctrl_pos)
+            if enabled[0]:
+                ctrl_pos = wrapper.get_joint_pos()
+                target_pos = map_position(ctrl_pos)
 
-            if current_pos is None:
-                current_pos = target_pos
+                if current_pos is None:
+                    current_pos = target_pos
 
-            current_pos = clamp_delta_move(current_pos, target_pos, max_speed_deg_per_step)
+                current_pos = clamp_delta_move(current_pos, target_pos, max_speed_deg_per_step)
+                pub.send_json({"positions": current_pos})
+                print(current_pos)
+            else:
+                pub.send_json({"positions": zero_positions})
+                current_pos = None
 
-            pub.send_json({"positions": current_pos})
             time.sleep(send_interval)
     except KeyboardInterrupt:
-        print("Shutting down publisher")
+        print("\nShutting down publisher")
     finally:
         pub.close()
         ctx.term()
 
 if __name__ == '__main__':
-    main()
+    import termios
+    import tty
+    old_settings = termios.tcgetattr(sys.stdin)
+    try:
+        tty.setcbreak(sys.stdin.fileno())
+        main()
+    finally:
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+ 
